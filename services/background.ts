@@ -1,15 +1,30 @@
 import * as Location from 'expo-location';
 import * as TaskManager from 'expo-task-manager';
-import { onAlarmTrigger } from '@/app/modal'; // modal exposes trigger callback
+import { onAlarmTrigger } from '@/app/modal';
 
 const TASK_NAME = 'TRACK_DEST';
 
-let trip: { latitude: number; longitude: number; radius: number } | null = null;
+// List of checkpoints
+type Checkpoint = {
+  id: string;
+  latitude: number;
+  longitude: number;
+  radius: number;
+};
 
-export function setTrip(data: { latitude: number; longitude: number; radius: number }) {
-  trip = data;
+let checkpoints: Checkpoint[] = [];
+
+// Add a new checkpoint
+export function addCheckpoint(data: Checkpoint) {
+  checkpoints.push(data);
 }
 
+// Remove checkpoint by ID
+export function removeCheckpoint(id: string) {
+  checkpoints = checkpoints.filter((c) => c.id !== id);
+}
+
+// Start GPS tracking
 export async function startTracking() {
   await Location.startLocationUpdatesAsync(TASK_NAME, {
     accuracy: Location.Accuracy.Balanced,
@@ -21,6 +36,7 @@ export async function startTracking() {
   });
 }
 
+// Stop GPS tracking
 export async function stopTracking() {
   const started = await Location.hasStartedLocationUpdatesAsync(TASK_NAME);
   if (started) {
@@ -28,26 +44,38 @@ export async function stopTracking() {
   }
 }
 
-// Background task
+// --- Background task ---
 TaskManager.defineTask(TASK_NAME, async ({ data, error }): Promise<void> => {
-  if (error || !trip || !data) return;
+  if (error || !data || checkpoints.length === 0) return;
 
   const location = (data as any).locations[0];
   if (!location) return;
 
   const { latitude, longitude } = location.coords;
 
-  const dist = distance(latitude, longitude, trip.latitude, trip.longitude);
+  const triggeredCheckpoints: string[] = [];
 
-  if (dist <= trip.radius) {
-    onAlarmTrigger(); // play alarm + show modal
+  for (const cp of checkpoints) {
+    const dist = distance(latitude, longitude, cp.latitude, cp.longitude);
+    if (dist <= cp.radius) {
+      // Trigger alarm for this checkpoint
+      onAlarmTrigger();
+      triggeredCheckpoints.push(cp.id);
+    }
+  }
+
+  // Remove triggered checkpoints
+  checkpoints = checkpoints.filter((cp) => !triggeredCheckpoints.includes(cp.id));
+
+  // Stop tracking if no more checkpoints left
+  if (checkpoints.length === 0) {
     await stopTracking();
   }
 });
 
-// Haversine distance (meters)
+// --- Haversine distance ---
 function distance(lat1: number, lon1: number, lat2: number, lon2: number) {
-  const R = 6371000;
+  const R = 6371000; // meters
   const toRad = (v: number) => (v * Math.PI) / 180;
   const dLat = toRad(lat2 - lat1);
   const dLon = toRad(lon2 - lon1);
