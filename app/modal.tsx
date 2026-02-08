@@ -1,35 +1,40 @@
-import { Modal, View, Pressable, StyleSheet } from 'react-native';
-import { ThemedView } from '@/components/ThemedView';
-import { ThemedText } from '@/components/ThemedText';
-import { Audio } from 'expo-av';
-import { useState } from 'react';
+import { ThemedText } from "@/components/ThemedText";
+import { ThemedView } from "@/components/ThemedView";
+import {
+  clearSnooze,
+  clearTriggeredCheckpoint,
+  snooze,
+} from "@/services/background";
+import { Audio } from "expo-av";
+import * as Haptics from "expo-haptics";
+import { useEffect, useState } from "react";
+import { Modal, Pressable, StyleSheet, View } from "react-native";
 
-// --- Alarm sound reference ---
+// ---------- SOUND ----------
 let alarmSound: Audio.Sound | null = null;
 
-// --- Reference to control modal visibility from background ---
-let setVisibleCallback: ((visible: boolean) => void) | null = null;
+// ---------- MODAL VISIBILITY CONTROL ----------
+let setVisibleExternal: ((v: boolean) => void) | null = null;
 
-// --- Called from background.ts when GPS reaches destination ---
 export function onAlarmTrigger() {
   playAlarm();
-  setVisibleCallback && setVisibleCallback(true);
+  startVibration();
+  setVisibleExternal?.(true);
 }
 
-// --- Play alarm in loop ---
+// ---------- SOUND ----------
 async function playAlarm() {
-  alarmSound = new Audio.Sound();
   try {
-    await alarmSound.loadAsync(require('../assets/alarm.mp3')); // your alarm file in assets/
+    alarmSound = new Audio.Sound();
+    await alarmSound.loadAsync(require("../assets/alarm.mp3"));
     await alarmSound.setIsLoopingAsync(true);
     await alarmSound.playAsync();
   } catch (e) {
-    console.log('Error playing alarm:', e);
+    console.log("Alarm sound error:", e);
   }
 }
 
-// --- Stop alarm sound ---
-export async function stopAlarm() {
+async function stopSound() {
   if (alarmSound) {
     await alarmSound.stopAsync();
     await alarmSound.unloadAsync();
@@ -37,38 +42,62 @@ export async function stopAlarm() {
   }
 }
 
-// --- Snooze alarm in minutes ---
-export async function snoozeAlarm(minutes = 5) {
-  await stopAlarm();
-  setTimeout(() => {
-    onAlarmTrigger();
-  }, minutes * 60 * 1000);
+// ---------- VIBRATION ----------
+let vibrationActive = false;
+
+function startVibration() {
+  vibrationActive = true;
+  Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
 }
 
-// --- Alarm modal component ---
+function stopVibration() {
+  vibrationActive = false;
+}
+
+// ---------- PUBLIC ----------
+export async function stopAlarmCompletely() {
+  await stopSound();
+  stopVibration();
+  clearTriggeredCheckpoint();
+  clearSnooze();
+}
+
+export async function snoozeAlarm(minutes = 5) {
+  await stopSound();
+  stopVibration();
+  snooze(minutes);
+}
+
+// ---------- MODAL ----------
 export default function AlarmModal() {
   const [visible, setVisible] = useState(false);
 
-  // expose setter to background trigger
-  setVisibleCallback = setVisible;
+  useEffect(() => {
+    setVisibleExternal = setVisible;
+    return () => {
+      setVisibleExternal = null;
+    };
+  }, []);
 
   return (
     <Modal visible={visible} transparent animationType="slide">
-      <View style={styles.modalBackground}>
-        <ThemedView style={styles.modalContainer}>
-          <ThemedText type="title">🚨 Alarm Ringing!</ThemedText>
-          <View style={styles.buttonRow}>
+      <View style={styles.overlay}>
+        <ThemedView style={styles.box}>
+          <ThemedText type="title">🚨 Alarm!</ThemedText>
+
+          <View style={styles.row}>
             <Pressable
-              style={styles.modalButton}
+              style={styles.stop}
               onPress={async () => {
-                await stopAlarm();
+                await stopAlarmCompletely();
                 setVisible(false);
               }}
             >
               <ThemedText>Stop</ThemedText>
             </Pressable>
+
             <Pressable
-              style={styles.modalButton}
+              style={styles.snooze}
               onPress={async () => {
                 await snoozeAlarm(5);
                 setVisible(false);
@@ -83,31 +112,38 @@ export default function AlarmModal() {
   );
 }
 
-// --- Styles ---
+// ---------- STYLES ----------
 const styles = StyleSheet.create({
-  modalBackground: {
+  overlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.7)',
-    justifyContent: 'center' as const,
-    alignItems: 'center' as const,
+    backgroundColor: "rgba(0,0,0,0.75)",
+    justifyContent: "center",
+    alignItems: "center",
   },
-  modalContainer: {
-    width: '80%',
-    backgroundColor: '#222',
+  box: {
+    width: "85%",
     padding: 25,
-    borderRadius: 12,
-    alignItems: 'center' as const,
+    borderRadius: 14,
+    alignItems: "center",
   },
-  buttonRow: {
-    flexDirection: 'row' as const,
-    marginTop: 20,
+  row: {
+    flexDirection: "row",
+    marginTop: 25,
   },
-  modalButton: {
+  stop: {
     flex: 1,
-    margin: 5,
-    padding: 12,
-    backgroundColor: '#2563eb',
+    marginRight: 8,
+    padding: 14,
     borderRadius: 10,
-    alignItems: 'center' as const,
+    backgroundColor: "#dc2626",
+    alignItems: "center",
+  },
+  snooze: {
+    flex: 1,
+    marginLeft: 8,
+    padding: 14,
+    borderRadius: 10,
+    backgroundColor: "#2563eb",
+    alignItems: "center",
   },
 });
