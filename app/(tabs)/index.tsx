@@ -1,10 +1,12 @@
-import AlarmModal, { onAlarmTrigger } from "@/app/modal";
+import AlarmModal from "@/app/modal";
 import { ThemedText } from "@/components/ThemedText";
 import { ThemedView } from "@/components/ThemedView";
 import {
   addCheckpoint,
   alarmEvents,
+  checkForegroundTrigger,
   Checkpoint,
+  distance,
   removeCheckpoint,
   startTracking,
 } from "@/services/background";
@@ -20,9 +22,7 @@ import {
   TextInput,
 } from "react-native";
 
-type UICheckpoint = Checkpoint & {
-  distanceKm?: number;
-};
+type UICheckpoint = Checkpoint & { distanceKm?: number };
 
 export default function HomeScreen() {
   const [lat, setLat] = useState("");
@@ -35,7 +35,6 @@ export default function HomeScreen() {
 
   useEffect(() => {
     let timer: ReturnType<typeof setInterval>;
-
     (async () => {
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== "granted") return;
@@ -55,56 +54,39 @@ export default function HomeScreen() {
   useEffect(() => {
     if (!currentLocation) return;
 
-    setCheckpoints(
-      (prev) =>
-        prev
-          .map((cp) => {
-            const distMeters = distance(
-              currentLocation.coords.latitude,
-              currentLocation.coords.longitude,
-              cp.latitude,
-              cp.longitude,
-            );
+    const triggered = checkForegroundTrigger(
+      currentLocation.coords.latitude,
+      currentLocation.coords.longitude,
+    );
 
-            if (distMeters <= cp.radius) {
-              onAlarmTrigger(); // play sound + show modal
-              removeCheckpoint(cp.id); // remove from background
-              return null; // mark for removal from table
-            }
-
-            return {
-              ...cp,
-              distanceKm: distMeters / 1000,
-            };
-          })
-          .filter(Boolean) as typeof prev,
+    setCheckpoints((prev) =>
+      prev.map((cp) => ({
+        ...cp,
+        distanceKm:
+          distance(
+            currentLocation.coords.latitude,
+            currentLocation.coords.longitude,
+            cp.latitude,
+            cp.longitude,
+          ) / 1000,
+      })),
     );
   }, [currentLocation]);
 
   useEffect(() => {
-    const handler = (id: string) => {
+    const handler = (id: string) =>
       setCheckpoints((prev) => prev.filter((c) => c.id !== id));
-    };
-
     alarmEvents.on("checkpointRemoved", handler);
-    return () => {
-      alarmEvents.off("checkpointRemoved", handler);
-    };
+    return () => alarmEvents.off("checkpointRemoved", handler);
   }, []);
 
   async function onAddCheckpoint() {
     const latitude = parseCoordinate(lat);
     const longitude = parseCoordinate(lon);
 
-    if (latitude === null || longitude === null) {
-      Alert.alert("Invalid coordinates");
-      return;
-    }
-
-    if (!label.trim()) {
-      Alert.alert("Label required");
-      return;
-    }
+    if (latitude === null || longitude === null)
+      return Alert.alert("Invalid coordinates");
+    if (!label.trim()) return Alert.alert("Label required");
 
     const cp: Checkpoint = {
       id: Date.now().toString(),
@@ -113,7 +95,6 @@ export default function HomeScreen() {
       radius: radiusKm * 1000,
       label,
     };
-
     addCheckpoint(cp);
     setCheckpoints((c) => [...c, cp]);
     await startTracking();
@@ -139,7 +120,7 @@ export default function HomeScreen() {
       <ThemedText style={styles.label}>Label</ThemedText>
       <TextInput
         style={styles.input}
-        placeholder="Home / Office / Station"
+        placeholder="Home / Office"
         placeholderTextColor="#aaa"
         value={label}
         onChangeText={setLabel}
@@ -191,13 +172,11 @@ export default function HomeScreen() {
             <ThemedText>
               📌 {item.label}
               {"\n"}
-              🔔 Radius: {(item.radius / 1000).toFixed(1)} km
-              {"\n"}
+              🔔 Radius: {(item.radius / 1000).toFixed(1)} km{"\n"}
               {item.distanceKm !== undefined
                 ? `📍 ${item.distanceKm.toFixed(2)} km left`
                 : "Calculating..."}
             </ThemedText>
-
             <Pressable
               style={styles.deleteButton}
               onPress={() => deleteCheckpoint(item.id)}
@@ -211,17 +190,6 @@ export default function HomeScreen() {
   );
 }
 
-function distance(lat1: number, lon1: number, lat2: number, lon2: number) {
-  const R = 6371000;
-  const toRad = (v: number) => (v * Math.PI) / 180;
-  const dLat = toRad(lat2 - lat1);
-  const dLon = toRad(lon2 - lon1);
-  const a =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
-
 const styles = StyleSheet.create({
   container: { flex: 1, padding: 20 },
   title: { textAlign: "center", marginBottom: 25 },
@@ -231,7 +199,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     padding: 12,
     borderColor: "#666",
-    color: "#fff", // ✅ FIXED
+    color: "#fff",
   },
   button: {
     marginTop: 25,
@@ -250,9 +218,5 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     alignItems: "center",
   },
-  deleteButton: {
-    padding: 6,
-    backgroundColor: "#dc2626",
-    borderRadius: 8,
-  },
+  deleteButton: { padding: 6, backgroundColor: "#dc2626", borderRadius: 8 },
 });
